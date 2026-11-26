@@ -352,6 +352,10 @@ summary:after{color:#a58cff}
 .done .tick{background:linear-gradient(135deg,#1fbf75,#38d6ff);box-shadow:0 0 40px -4px #34e0a0}
 .info li:before{background:var(--grad)}
 .toast{background:#14142af0;backdrop-filter:blur(14px);border:1px solid #7c6cff66;border-left:4px solid #34e0a0;box-shadow:0 0 40px -8px #7c6cff}
+.authbody{padding:8px 24px 26px;display:grid;gap:14px}.authbody p{color:var(--mute)}.authbody .btn{width:100%}
+.btn.disc{background:#5865f2;box-shadow:0 8px 28px -8px #5865f2cc}
+.who{display:flex;align-items:center;gap:10px;margin-top:14px;padding:10px 12px;border-radius:10px;background:#ffffff0b;border:1px solid var(--line);font-weight:600;font-size:14.5px}
+.who img{width:26px;height:26px;border-radius:50%}.mini{width:22px;height:22px;border-radius:50%}
 </style>
 </head>
 
@@ -367,6 +371,7 @@ summary:after{color:#a58cff}
     <input id="q" type="search" placeholder="Pesquisar bots, scripts, templates..." autocomplete="off"><kbd>/</kbd>
   </label>
   <div class="actions">
+    <button class="btn ghost" id="login" type="button"></button>
     <button class="btn light" data-support><span class="t">Suporte</span><span aria-hidden="true">✉</span></button>
     <button class="btn" id="cartBtn" aria-label="Abrir carrinho"><span class="t">Carrinho</span><span class="count" id="cc">0</span></button>
   </div>
@@ -457,10 +462,7 @@ summary:after{color:#a58cff}
 <div class="modal" id="chat" role="dialog" aria-label="Suporte">
   <div class="mh"><h3>Falar com a equipa</h3><button class="close" data-close aria-label="Fechar">×</button></div>
   <form id="form">
-    <div class="row">
-      <div><label for="nome">Nome</label><input id="nome" required maxlength="60" autocomplete="name"></div>
-      <div><label for="disc">Utilizador Discord</label><input id="disc" required maxlength="40" placeholder="joao123"></div>
-    </div>
+    <div class="who" id="who"></div>
     <label for="ass">Assunto</label>
     <select id="ass"><option>Dúvida antes de comprar</option><option>Encomenda</option><option>Bot à medida</option><option>Problema com uma compra</option><option>Suporte técnico</option><option>Outro</option></select>
     <label for="txt">Mensagem</label><textarea id="txt" required maxlength="1500"></textarea>
@@ -470,9 +472,15 @@ summary:after{color:#a58cff}
   </form>
   <div class="done" id="done">
     <div class="tick">✓</div><h3>Ticket <span id="tid"></span> criado</h3>
-    <p>Vamos falar contigo no Discord. Confirma que aceitas mensagens de membros do servidor.</p>
-    <button class="btn light" id="again" type="button">Enviar outro</button>
+    <p>Este canal é privado: só tu e a equipa o conseguem ver.</p>
+    <a class="btn" id="chLink" target="_blank" rel="noopener" style="display:none">Abrir o ticket no Discord</a>
+    <button class="btn light" id="again" type="button">Fechar</button>
   </div>
+</div>
+
+<div class="modal" id="auth" role="dialog" aria-label="Entrar com Discord">
+  <div class="mh"><h3 id="authT"></h3><button class="close" data-close aria-label="Fechar">×</button></div>
+  <div class="authbody" id="authB"></div>
 </div>
 
 <div class="toast" id="toast" role="status"></div>
@@ -484,7 +492,8 @@ summary:after{color:#a58cff}
 const SITE = {
   nome: "Pratas Market",
   moeda: "€",
-  ticketEndpoint: "https://teste.matiaspratas12.workers.dev/ticket",
+  api: "https://teste.matiaspratas12.workers.dev",
+  convite: "https://discord.gg/SEU-CONVITE",
   sobre: "Bots, scripts e templates de Discord desenvolvidos por quem os usa, com suporte direto.",
   topo: ["<b>Entrega no Discord</b> logo após o pagamento", "Suporte todos os dias"],
   ticks: ["Código e guia de instalação", "Suporte no Discord", "Atualizações incluídas"],
@@ -659,7 +668,7 @@ function renderCart() {
 
 function checkout() {
   const ids = cartIds();
-  openChat("Encomenda");
+  if (!openChat("Encomenda")) return;
   $("prod").value = ids.map(i => PRODUTOS[i].nome).join(", ").slice(0, 80);
   $("txt").value = "Quero finalizar esta encomenda:\n" + ids.map(i => `- ${cart[i]}x ${PRODUTOS[i].nome} (${money(PRODUTOS[i].preco * cart[i])})`).join("\n") + "\nTotal: " + money(cartTotal());
 }
@@ -668,7 +677,7 @@ function checkout() {
    7. PAINÉIS E AVISOS
    ========================================================================== */
 function closeAll() {
-  ["dr", "chat", "pm", "ov"].forEach(id => $(id).classList.remove("open"));
+  ["dr", "chat", "pm", "auth", "ov"].forEach(id => $(id).classList.remove("open"));
   document.body.classList.remove("lock");
 }
 function show(id) { closeAll(); $(id).classList.add("open"); $("ov").classList.add("open"); document.body.classList.add("lock"); }
@@ -689,11 +698,14 @@ function openProduct(i) {
 }
 
 function openChat(subject) {
+  wanted = subject || "";
+  if (!sess) { showAuth("login"); return false; }
   show("chat");
+  $("done").style.display = "none"; $("form").style.display = "block";
   if (subject) $("ass").value = subject;
-  $("nome").value ||= store.get("n", "");
-  $("disc").value ||= store.get("d", "");
-  ($("nome").value ? $("txt") : $("nome")).focus();
+  $("who").innerHTML = `<img src="${esc(sess.av)}" alt=""><span>Ticket privado como ${esc(sess.name)}</span>`;
+  $("txt").focus();
+  return true;
 }
 
 function toast(text) {
@@ -707,26 +719,68 @@ function toast(text) {
    ========================================================================== */
 async function sendTicket(e) {
   e.preventDefault();
-  if ($("hp").value) return;
+  if ($("hp").value || !sess) return;
   const msg = $("msg"), btn = $("go");
-  let status = 0;
-  btn.disabled = true; msg.textContent = "A enviar...";
+  btn.disabled = true; msg.textContent = "A criar o teu ticket...";
   try {
-    const r = await fetch(SITE.ticketEndpoint, {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ nome: $("nome").value, discord: $("disc").value, assunto: $("ass").value, produto: $("prod").value, mensagem: $("txt").value, hp: $("hp").value, pagina: location.href })
+    const r = await fetch(SITE.api + "/ticket", {
+      method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + sess.t },
+      body: JSON.stringify({ assunto: $("ass").value, produto: $("prod").value, mensagem: $("txt").value, hp: $("hp").value })
     });
-    status = r.status;
     let d = {}; try { d = await r.json(); } catch {}
-    if (!r.ok) { const err = new Error(d.erro || ""); err.fromServer = !!d.erro; throw err; }
-    store.set("n", $("nome").value); store.set("d", $("disc").value);
+    if (r.status === 401) { store.set("sess", ""); sess = null; renderAuth(); msg.textContent = ""; return showAuth("login"); }
+    if (d.codigo === "nao_membro") { inviteUrl = d.convite || SITE.convite; msg.textContent = ""; return showAuth("join"); }
+    if (!r.ok) throw new Error(d.erro || "Erro " + r.status);
     if ($("ass").value === "Encomenda") { cart = {}; saveCart(); }
     $("tid").textContent = "#" + d.id;
+    const a = $("chLink"); a.href = d.url || "#"; a.style.display = d.url ? "" : "none";
     $("form").style.display = "none"; $("done").style.display = "block"; msg.textContent = "";
   } catch (err) {
-    msg.textContent = err.fromServer ? err.message : `Não foi possível contactar o servidor (${status || "sem ligação"}). Tenta novamente ou fala connosco no Discord.`;
+    msg.textContent = err.message === "Failed to fetch" ? "Sem ligação ao servidor. Tenta novamente ou fala connosco no Discord." : err.message;
   } finally { btn.disabled = false; }
 }
+
+/* ==========================================================================
+   LOGIN COM DISCORD (o Worker trata do OAuth2 e devolve uma sessão assinada)
+   ========================================================================== */
+const dec = s => JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(s.replace(/-/g, "+").replace(/_/g, "/")), c => c.charCodeAt(0))));
+let sess = null, wanted = "", inviteUrl = SITE.convite;
+
+function loadSession() {
+  const h = location.hash, m = h.match(/sess=([\w.-]+)/), bad = /autherr/.test(h);
+  if (m || bad) history.replaceState(null, "", location.pathname + location.search);
+  if (m) store.set("sess", m[1]);
+  if (bad) toast("Não foi possível entrar com o Discord.");
+  const t = store.get("sess", "");
+  try { const u = dec(t.split(".")[0]); sess = u.exp > Date.now() / 1000 ? { t, ...u } : null; } catch { sess = null; }
+  if (!sess) store.set("sess", "");
+  renderAuth();
+  return !!(m && sess);
+}
+function renderAuth() {
+  $("login").innerHTML = sess ? `<img class="mini" src="${esc(sess.av)}" alt=""><span class="t">${esc(sess.name)}</span>` : `<span>Entrar com Discord</span>`;
+}
+function showAuth(mode) {
+  const t = $("authT"), b = $("authB");
+  if (mode === "join") {
+    t.textContent = "Entra no nosso servidor";
+    b.innerHTML = `<p>Só membros do servidor podem comprar, e ainda não encontrámos a tua conta lá. Entra e volta a tentar.</p><a class="btn disc" href="${esc(inviteUrl)}" target="_blank" rel="noopener">Entrar no servidor</a><button class="btn light" id="retry" type="button">Já entrei, tentar de novo</button>`;
+  } else if (mode === "account") {
+    t.textContent = "A tua conta";
+    b.innerHTML = `<p>Sessão iniciada como <b>${esc(sess.name)}</b>.</p><button class="btn light" id="logout" type="button">Terminar sessão</button>`;
+  } else {
+    t.textContent = "Entra com o Discord";
+    b.innerHTML = `<p>Para comprar precisas de entrar com a tua conta Discord e de fazer parte do nosso servidor. O teu ticket é um canal privado, visível só por ti e pela equipa.</p><button class="btn disc" id="goLogin" type="button">Entrar com Discord</button>`;
+  }
+  show("auth");
+}
+document.addEventListener("click", e => {
+  const id = (e.target.closest("button,a") || {}).id;
+  if (id === "login") showAuth(sess ? "account" : "login");
+  if (id === "goLogin") { store.set("pend", wanted); location.href = SITE.api + "/auth/login?return=" + encodeURIComponent(location.origin + location.pathname); }
+  if (id === "logout") { store.set("sess", ""); sess = null; renderAuth(); closeAll(); toast("Sessão terminada"); }
+  if (id === "retry") openChat(wanted);
+});
 
 /* ==========================================================================
    9. EVENTOS
@@ -774,14 +828,19 @@ function bindEvents() {
     if (e.target.closest("[data-close]") || e.target === $("ov")) closeAll();
   });
   $("form").onsubmit = sendTicket;
-  $("again").onclick = () => { $("done").style.display = "none"; $("form").style.display = "block"; $("txt").value = ""; };
+  $("again").onclick = () => { $("done").style.display = "none"; $("form").style.display = "block"; $("txt").value = ""; closeAll(); };
 }
 
 renderStatic();
 refresh();
 renderCart();
 bindEvents();
+const newLogin = loadSession();
 playDemo();
+if (newLogin) {
+  const pend = store.get("pend", ""); store.set("pend", "");
+  if (pend === "Encomenda") checkout(); else if (pend) openChat(pend); else toast("Sessão iniciada como " + sess.name);
+}
 
 /* efeitos: marquee e spotlight que segue o rato */
 $("mq").innerHTML = [...["discord.js","Python","Node.js","Slash commands","Botões e menus","Transcrições","Anti-raid","Painel web"],...["discord.js","Python","Node.js","Slash commands","Botões e menus","Transcrições","Anti-raid","Painel web"]].map(t => `<span>${t}</span>`).join("");
